@@ -1,0 +1,308 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# NOTE: Change command from `find . -name "*.md"` to `find . -not -path "*/node_modules/*" -not -path "*/.tox/*" -name "*.md"`
+# if you want to run check locally
+
+name: Modified Docs
+jobs:
+  style:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+    - name: Setup Python 3.10
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+    - name: Install dependencies
+      run: |-
+        python -m pip install --upgrade pip
+        pip install inotify
+    - name: Run inotifywait
+      run: |-
+        python3 -c "
+        import inotify.adapters
+        import inotify.constants
+        import os
+        from datetime import datetime, timezone
+        with open('/home/runner/inotifywait-log-style.csv', 'w') as log_file:
+          i = inotify.adapters.InotifyTree('/home/runner/work/dolphinscheduler/dolphinscheduler', inotify.constants.IN_CREATE | inotify.constants.IN_ACCESS)
+          for event in i.event_gen(yield_nones=False):
+            (_, type_names, path, filename) = event
+            now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f') + 'Z'
+            events = ','.join(type_names)
+            log_file.write(f'{now};{path};{filename};{events}\n')
+            log_file.flush()
+            os.fsync(log_file.fileno())
+        " &
+    - uses: actions/checkout@v4
+    - run: touch optcd-3.txt
+    - name: Style Check
+      run: ./mvnw spotless:check
+    - run: touch optcd-4.txt
+    - name: Upload inotifywait logs
+      uses: actions/upload-artifact@v4
+      with:
+        name: inotifywait-style
+        path: /home/runner/inotifywait-log-style.csv
+    name: style
+  img-check:
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs
+    steps:
+    - name: Setup Python 3.10
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+    - name: Install dependencies
+      run: |-
+        python -m pip install --upgrade pip
+        pip install inotify
+    - name: Run inotifywait
+      run: |-
+        python3 -c "
+        import inotify.adapters
+        import inotify.constants
+        import os
+        from datetime import datetime, timezone
+        with open('/home/runner/inotifywait-log-img-check.csv', 'w') as log_file:
+          i = inotify.adapters.InotifyTree('/home/runner/work/dolphinscheduler/dolphinscheduler', inotify.constants.IN_CREATE | inotify.constants.IN_ACCESS)
+          for event in i.event_gen(yield_nones=False):
+            (_, type_names, path, filename) = event
+            now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f') + 'Z'
+            events = ','.join(type_names)
+            log_file.write(f'{now};{path};{filename};{events}\n')
+            log_file.flush()
+            os.fsync(log_file.fileno())
+        " &
+    - uses: actions/checkout@v4
+    - run: touch optcd-3.txt
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.9
+    - run: touch optcd-4.txt
+    - name: Run Dev Relative Reference
+      run: python img_utils.py -v dev-syntax
+    - run: touch optcd-5.txt
+    - name: Run Image Check
+      run: python img_utils.py -v check
+    - run: touch optcd-6.txt
+    - name: Upload inotifywait logs
+      uses: actions/upload-artifact@v4
+      with:
+        name: inotifywait-img-check
+        path: /home/runner/inotifywait-log-img-check.csv
+    name: img-check
+  dead-link:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+    - name: Setup Python 3.10
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+    - name: Install dependencies
+      run: |-
+        python -m pip install --upgrade pip
+        pip install inotify
+    - name: Run inotifywait
+      run: |-
+        python3 -c "
+        import inotify.adapters
+        import inotify.constants
+        import os
+        from datetime import datetime, timezone
+        with open('/home/runner/inotifywait-log-dead-link.csv', 'w') as log_file:
+          i = inotify.adapters.InotifyTree('/home/runner/work/dolphinscheduler/dolphinscheduler', inotify.constants.IN_CREATE | inotify.constants.IN_ACCESS)
+          for event in i.event_gen(yield_nones=False):
+            (_, type_names, path, filename) = event
+            now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f') + 'Z'
+            events = ','.join(type_names)
+            log_file.write(f'{now};{path};{filename};{events}\n')
+            log_file.flush()
+            os.fsync(log_file.fileno())
+        " &
+    - uses: actions/checkout@v4
+    - run: touch optcd-3.txt
+    - run: sudo npm install -g markdown-link-check@3.11.2
+    - run: touch optcd-4.txt
+    - run: sudo apt install plocate -y
+    - run: touch optcd-5.txt
+    - run: |-
+        for file in $(locate "$PWD*/*.md" | grep -v ./deploy/terraform/aws/README.md); do
+          markdown-link-check -c .dlc.json -q "$file" &
+        done
+        wait
+    - run: touch optcd-6.txt
+    - name: Upload inotifywait logs
+      uses: actions/upload-artifact@v4
+      with:
+        name: inotifywait-dead-link
+        path: /home/runner/inotifywait-log-dead-link.csv
+    name: dead-link
+  paths-filter:
+    name: paths-filter
+    runs-on: ubuntu-latest
+    outputs:
+      helm-doc: ${{ steps.filter.outputs.helm-doc }}
+    steps:
+    - name: Setup Python 3.10
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+    - name: Install dependencies
+      run: |-
+        python -m pip install --upgrade pip
+        pip install inotify
+    - name: Run inotifywait
+      run: |-
+        python3 -c "
+        import inotify.adapters
+        import inotify.constants
+        import os
+        from datetime import datetime, timezone
+        with open('/home/runner/inotifywait-log-paths-filter.csv', 'w') as log_file:
+          i = inotify.adapters.InotifyTree('/home/runner/work/dolphinscheduler/dolphinscheduler', inotify.constants.IN_CREATE | inotify.constants.IN_ACCESS)
+          for event in i.event_gen(yield_nones=False):
+            (_, type_names, path, filename) = event
+            now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f') + 'Z'
+            events = ','.join(type_names)
+            log_file.write(f'{now};{path};{filename};{events}\n')
+            log_file.flush()
+            os.fsync(log_file.fileno())
+        " &
+    - uses: actions/checkout@v4
+    - run: touch optcd-3.txt
+    - uses: dorny/paths-filter@b2feaf19c27470162a626bd6fa8438ae5b263721
+      id: filter
+      with:
+        filters: |-
+          helm-doc:
+            - 'deploy/**'
+    - run: touch optcd-4.txt
+    - name: Upload inotifywait logs
+      uses: actions/upload-artifact@v4
+      with:
+        name: inotifywait-paths-filter
+        path: /home/runner/inotifywait-log-paths-filter.csv
+  helm-doc:
+    name: helm-doc
+    needs: paths-filter
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+    - name: Setup Python 3.10
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+    - name: Install dependencies
+      run: |-
+        python -m pip install --upgrade pip
+        pip install inotify
+    - name: Run inotifywait
+      run: |-
+        python3 -c "
+        import inotify.adapters
+        import inotify.constants
+        import os
+        from datetime import datetime, timezone
+        with open('/home/runner/inotifywait-log-helm-doc.csv', 'w') as log_file:
+          i = inotify.adapters.InotifyTree('/home/runner/work/dolphinscheduler/dolphinscheduler', inotify.constants.IN_CREATE | inotify.constants.IN_ACCESS)
+          for event in i.event_gen(yield_nones=False):
+            (_, type_names, path, filename) = event
+            now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f') + 'Z'
+            events = ','.join(type_names)
+            log_file.write(f'{now};{path};{filename};{events}\n')
+            log_file.flush()
+            os.fsync(log_file.fileno())
+        " &
+    - uses: actions/checkout@v4
+      with:
+        submodules: true
+    - run: touch optcd-3.txt
+    - name: Generating helm-doc
+      run: |-
+        ./mvnw validate -P helm-doc -pl :dolphinscheduler
+    - run: touch optcd-4.txt
+    - name: Check helm-doc
+      run: |-
+        DIFF=$(git diff ${GITHUB_WORKSPACE}/deploy/kubernetes/*md)
+        if [ ! -z "$DIFF" ]; then
+            echo "###### ERROR: helm-doc is not up to date ######"
+            echo "Please execute './mvnw validate -P helm-doc -pl :dolphinscheduler' in your clone, of your fork, of the project, and commit an updated deploy/kubernetes/README.md for the chart."
+            echo "###### ERROR: helm-doc is not up to date ######"
+        fi
+        git diff --exit-code
+    - run: touch optcd-5.txt
+    - name: Upload inotifywait logs
+      uses: actions/upload-artifact@v4
+      with:
+        name: inotifywait-helm-doc
+        path: /home/runner/inotifywait-log-helm-doc.csv
+  result:
+    name: result
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs:
+    - style
+    - img-check
+    - dead-link
+    steps:
+    - name: Setup Python 3.10
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+    - name: Install dependencies
+      run: |-
+        python -m pip install --upgrade pip
+        pip install inotify
+    - name: Run inotifywait
+      run: |-
+        python3 -c "
+        import inotify.adapters
+        import inotify.constants
+        import os
+        from datetime import datetime, timezone
+        with open('/home/runner/inotifywait-log-result.csv', 'w') as log_file:
+          i = inotify.adapters.InotifyTree('/home/runner/work/dolphinscheduler/dolphinscheduler', inotify.constants.IN_CREATE | inotify.constants.IN_ACCESS)
+          for event in i.event_gen(yield_nones=False):
+            (_, type_names, path, filename) = event
+            now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f') + 'Z'
+            events = ','.join(type_names)
+            log_file.write(f'{now};{path};{filename};{events}\n')
+            log_file.flush()
+            os.fsync(log_file.fileno())
+        " &
+    - name: Status
+      run: |-
+        if [[ ${{ contains(needs.*.result, 'failure') }} == 'true' || ${{ contains(needs.*.result, 'cancelled') }} == 'true' ]]; then
+          echo "Build Failed!"
+          exit 1
+        else
+          echo "Build Success!"
+        fi
+    - run: touch optcd-3.txt
+    - name: Upload inotifywait logs
+      uses: actions/upload-artifact@v4
+      with:
+        name: inotifywait-result
+        path: /home/runner/inotifywait-log-result.csv
+'on':
+- push
+- workflow_dispatch
