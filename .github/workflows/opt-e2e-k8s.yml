@@ -1,0 +1,264 @@
+#
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# install kubectl
+# install kind
+# create kind cluster
+# install helm
+# install ds chart via helm
+
+name: Modified E2E-K8S
+jobs:
+  paths-filter:
+    name: paths-filter
+    runs-on: ubuntu-latest
+    outputs:
+      not-ignore: ${{ steps.filter.outputs.not-ignore }}
+    steps:
+    - name: Setup Python 3.10
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+    - name: Install dependencies
+      run: |-
+        python -m pip install --upgrade pip
+        pip install inotify
+    - name: Run inotifywait
+      run: |-
+        python3 -c "
+        import inotify.adapters
+        import inotify.constants
+        import os
+        from datetime import datetime, timezone
+        with open('/home/runner/inotifywait-log-paths-filter.csv', 'w') as log_file:
+          i = inotify.adapters.InotifyTree('/home/runner/work/dolphinscheduler/dolphinscheduler', inotify.constants.IN_CREATE | inotify.constants.IN_ACCESS)
+          for event in i.event_gen(yield_nones=False):
+            (_, type_names, path, filename) = event
+            now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f') + 'Z'
+            events = ','.join(type_names)
+            log_file.write(f'{now};{path};{filename};{events}\n')
+            log_file.flush()
+            os.fsync(log_file.fileno())
+        " &
+    - uses: actions/checkout@v4
+    - run: touch optcd-3.txt
+    - uses: dorny/paths-filter@b2feaf19c27470162a626bd6fa8438ae5b263721
+      id: filter
+      with:
+        filters: |-
+          not-ignore:
+            - '!(docs/**)'
+    - run: touch optcd-4.txt
+    - name: Upload inotifywait logs
+      uses: actions/upload-artifact@v4
+      with:
+        name: inotifywait-paths-filter
+        path: /home/runner/inotifywait-log-paths-filter.csv
+  e2e-k8s:
+    name: e2e-k8s
+    needs: paths-filter
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+    - name: Setup Python 3.10
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+    - name: Install dependencies
+      run: |-
+        python -m pip install --upgrade pip
+        pip install inotify
+    - name: Run inotifywait
+      run: |-
+        python3 -c "
+        import inotify.adapters
+        import inotify.constants
+        import os
+        from datetime import datetime, timezone
+        with open('/home/runner/inotifywait-log-e2e-k8s.csv', 'w') as log_file:
+          i = inotify.adapters.InotifyTree('/home/runner/work/dolphinscheduler/dolphinscheduler', inotify.constants.IN_CREATE | inotify.constants.IN_ACCESS)
+          for event in i.event_gen(yield_nones=False):
+            (_, type_names, path, filename) = event
+            now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f') + 'Z'
+            events = ','.join(type_names)
+            log_file.write(f'{now};{path};{filename};{events}\n')
+            log_file.flush()
+            os.fsync(log_file.fileno())
+        " &
+    - uses: actions/checkout@v4
+      with:
+        submodules: true
+    - run: touch optcd-3.txt
+    - name: Maximize runner space
+      uses: ./.github/actions/maximize-build-space
+      with:
+        root-reserve-mb: 30720
+        temp-reserve-mb: 10240
+        remove-dotnet: 'true'
+        remove-android: 'true'
+        remove-haskell: 'true'
+        remove-codeql: 'true'
+        remove-docker-images: 'true'
+    - run: touch optcd-4.txt
+    - uses: actions/checkout@v4
+      with:
+        submodules: true
+    - run: touch optcd-5.txt
+    - name: Build Image
+      run: |-
+        ./mvnw -B clean package \
+        -Dmaven.test.skip=true \
+        -Dspotless.skip=true \
+        -Pdocker,staging -Ddocker.tag=ci
+    - run: touch optcd-6.txt
+    - name: Create k8s Kind Cluster
+      run: |-
+        # install kubectl
+        curl -LO "https://dl.k8s.io/release/v1.28.3/bin/linux/amd64/kubectl"
+        sudo chmod +x kubectl
+        sudo mv kubectl /usr/local/bin/kubectl
+
+        # install kind
+        curl -LO https://github.com/kubernetes-sigs/kind/releases/download/v0.20.0/kind-linux-amd64
+        sudo chmod +x kind-linux-amd64
+        sudo mv kind-linux-amd64 /usr/local/bin/kind
+        kind version
+
+        # create kind cluster
+        kind_node_image="kindest/node:v1.23.17"
+        echo "Kubernetes version: ${kind_node_image}"
+        kind create cluster --name dolphinscheduler --image ${kind_node_image}
+        kubectl version
+        kubectl get all --all-namespaces
+    - run: touch optcd-7.txt
+    - name: Load images
+      run: |-
+        components=("master" "worker" "api" "tools" "alert-server")
+        for component in "${components[@]}"; do
+          kind load docker-image apache/dolphinscheduler-${component}:ci --name dolphinscheduler
+        done
+    - run: touch optcd-8.txt
+    - name: Helm install dolphinscheduler
+      working-directory: ${{ github.workspace }}/deploy/kubernetes/dolphinscheduler
+      run: |-
+        # install helm
+        curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+        # install ds chart via helm
+        helm repo add bitnami https://charts.bitnami.com/bitnami
+        helm dependency update .
+        helm upgrade --install --create-namespace -n dolphinscheduler dolphinscheduler . -f - <<EOF
+        image:
+          registry: apache
+          tag: ci
+        master:
+          replicas: 1
+          livenessProbe:
+            initialDelaySeconds: 120
+          readinessProbe:
+            initialDelaySeconds: 120
+        worker:
+          replicas: 1
+          livenessProbe:
+            initialDelaySeconds: 120
+          readinessProbe:
+            initialDelaySeconds: 120
+        alert:
+          livenessProbe:
+            initialDelaySeconds: 120
+          readinessProbe:
+            initialDelaySeconds: 120
+        api:
+          livenessProbe:
+            initialDelaySeconds: 120
+          readinessProbe:
+            initialDelaySeconds: 120
+        EOF
+    - run: touch optcd-9.txt
+    - name: Wait for pods
+      run: |-
+        JSONPATH='{range .items[*]}{@.metadata.name}:{range @.status.conditions[*]}{@.type}={@.status};{end}{end}';
+        components=("master" "worker" "api" "alert")
+        for component in "${components[@]}"; do
+          until kubectl -n dolphinscheduler get pods -l app.kubernetes.io/component=${component} -o jsonpath="$JSONPATH" 2>&1 | grep -q "Ready=True"; do
+            echo "waiting for dolphinscheduler ${component} to be available"
+            sleep 10
+            kubectl get pods --all-namespaces
+            kubectl get events --all-namespaces
+            for pod in $(kubectl get pods -n dolphinscheduler -o jsonpath='{.items[*].metadata.name}'); do
+              echo "logs for pod $pod:"
+              kubectl logs --tail=1000 -n dolphinscheduler $pod
+            done
+          done
+        done
+    - run: touch optcd-10.txt
+    - name: Upload inotifywait logs
+      uses: actions/upload-artifact@v4
+      with:
+        name: inotifywait-e2e-k8s
+        path: /home/runner/inotifywait-log-e2e-k8s.csv
+  result:
+    name: result
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs:
+    - e2e-k8s
+    - paths-filter
+    steps:
+    - name: Setup Python 3.10
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+    - name: Install dependencies
+      run: |-
+        python -m pip install --upgrade pip
+        pip install inotify
+    - name: Run inotifywait
+      run: |-
+        python3 -c "
+        import inotify.adapters
+        import inotify.constants
+        import os
+        from datetime import datetime, timezone
+        with open('/home/runner/inotifywait-log-result.csv', 'w') as log_file:
+          i = inotify.adapters.InotifyTree('/home/runner/work/dolphinscheduler/dolphinscheduler', inotify.constants.IN_CREATE | inotify.constants.IN_ACCESS)
+          for event in i.event_gen(yield_nones=False):
+            (_, type_names, path, filename) = event
+            now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f') + 'Z'
+            events = ','.join(type_names)
+            log_file.write(f'{now};{path};{filename};{events}\n')
+            log_file.flush()
+            os.fsync(log_file.fileno())
+        " &
+    - name: Status
+      run: |-
+        if [[ ${{ needs.paths-filter.outputs.not-ignore }} == 'false' && ${{ github.event_name }} == 'pull_request' ]]; then
+          echo "Skip E2E-K8S!"
+          exit 0
+        fi
+        if [[ ${{ needs.e2e-k8s.result }} != 'success' ]]; then
+          echo "E2E-K8S Failed!"
+          exit -1
+        fi
+    - run: touch optcd-3.txt
+    - name: Upload inotifywait logs
+      uses: actions/upload-artifact@v4
+      with:
+        name: inotifywait-result
+        path: /home/runner/inotifywait-log-result.csv
+'on':
+- push
+- workflow_dispatch
